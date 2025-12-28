@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>S-RAI OS v2.6 — Policy-Governed Hybrid RAG</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.20/pdf.min.js"></script>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap">
+
+    <style>
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #151b2e;
+            --bg-card: #1a2235;
+            --accent-primary: #00ffc8;
+            --text-primary: #e8f4ff;
+            --text-secondary: #94a3b8;
+            --text-muted: #7f8fa6;
+            --border: rgba(0, 255, 200, .15);
+            --glow: 0 0 20px rgba(0, 255, 200, .3);
+            --error: #ff4060
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: var(--bg-secondary);
+            padding: 1rem;
+            text-align: center;
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header h1 {
+            color: var(--accent-primary);
+            font-size: 1.8rem;
+            margin-bottom: .5rem;
+        }
+
+        .status-bar {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            padding: .5rem;
+            background: rgba(26, 34, 53, .8);
+            font-size: .9rem;
+            color: var(--text-muted);
+            flex-wrap: wrap;
+        }
+
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        @media(min-width:768px) {
+            .main {
+                flex-direction: row;
+            }
+        }
+
+        .sidebar {
+            width: 100%;
+            background: var(--bg-card);
+            border-right: 1px solid var(--border);
+            padding: 1rem;
+            overflow-y: auto;
+        }
+
+        @media(min-width:768px) {
+            .sidebar {
+                width: 380px;
+            }
+        }
+
+        .content {
+            flex: 1;
+            padding: 1rem;
+            overflow-y: auto;
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: .75rem;
+            padding: 1.2rem;
+            margin-bottom: 1rem;
+        }
+
+        h3 {
+            color: var(--accent-primary);
+            margin-bottom: .8rem;
+        }
+
+        input,
+        textarea,
+        select {
+            width: 100%;
+            padding: .75rem;
+            margin: .5rem 0;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            border-radius: .5rem;
+            font-family: inherit;
+        }
+
+        button {
+            padding: .75rem 1.2rem;
+            background: var(--accent-primary);
+            color: var(--bg-primary);
+            border: none;
+            border-radius: .5rem;
+            cursor: pointer;
+            margin: .25rem 0;
+            font-weight: 600;
+            transition: box-shadow .2s;
+        }
+
+        button:hover {
+            box-shadow: var(--glow);
+        }
+
+        button.danger {
+            background: var(--error);
+        }
+
+        .log {
+            padding: .75rem;
+            margin: .5rem 0;
+            background: rgba(0, 255, 200, .05);
+            border-left: 4px solid var(--accent-primary);
+            border-radius: 0 .5rem .5rem 0;
+            font-size: .9rem;
+        }
+
+        .result-item {
+            padding: 1rem;
+            margin: .75rem 0;
+            background: var(--bg-card);
+            border-radius: .75rem;
+            border: 1px solid var(--border);
+        }
+
+        .tag {
+            padding: .4rem .8rem;
+            background: rgba(0, 255, 200, .1);
+            border: 1px solid var(--accent-primary);
+            border-radius: .5rem;
+            font-size: .85rem;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .tag.active {
+            background: rgba(0, 255, 200, .3);
+        }
+
+        .tabs {
+            display: flex;
+            gap: .5rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .tab {
+            padding: .75rem 1.2rem;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .tab.active {
+            color: var(--accent-primary);
+            border-bottom: 3px solid var(--accent-primary);
+        }
+
+        .progress {
+            height: 6px;
+            background: var(--bg-card);
+            border-radius: 3px;
+            margin: 1rem 0;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: var(--accent-primary);
+            width: 0%;
+            transition: width .3s ease;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1>S-RAI OS v2.6</h1>
+        <div class="status-bar">
+            <span>Status: <span id="status">Initializing...</span></span>
+            <span>Model: <span id="model-status">Loading...</span></span>
+            <span>Docs: <span id="doc-count">0</span></span>
+            <span>Memory: <span id="memory-count">0</span></span>
+            <span>Identity: <span id="identity-status">None</span></span>
+        </div>
+    </div>
+
+    <div class="main">
+        <div class="sidebar">
+
+            <div class="card">
+                <h3>Policy-Keys</h3>
+                <button onclick="policy.createRoot()">Create Root Key</button>
+                <button onclick="policy.deriveAgent()">Derive Agent Key</button>
+                <div id="policy-info" style="margin-top:.5rem;font-size:.75rem;word-break:break-all"></div>
+            </div>
+
+            <div class="card">
+                <h3>Query Engine</h3>
+                <input id="query-input" placeholder="Ask sovereign knowledge...">
+                <div style="display:flex;align-items:center;gap:1rem;margin:1rem 0">
+                    <label>Fusion α:</label>
+                    <input type="range" id="fusion-alpha" min="0" max="1000" value="500" step="10" style="flex:1">
+                    <span id="alpha-value">0.50</span>
+                </div>
+                <button onclick="srai.executeQuery()">Execute RAG</button>
+                <button id="cancel-btn" style="display:none" class="danger" onclick="srai.cancelGeneration()">Cancel</button>
+                <div class="progress">
+                    <div class="progress-bar" id="query-progress"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Sources</h3>
+                <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem">
+                    <span class="tag active" id="personal-tag" onclick="srai.toggleSource('personal')">Personal</span>
+                    <span class="tag" id="public-tag" onclick="srai.toggleSource('public')">Public</span>
+                </div>
+                <button onclick="document.getElementById('file-upload').click()">Load Documents</button>
+                <input type="file" id="file-upload" multiple accept=".txt,.md,.pdf,.json" style="display:none">
+            </div>
+
+            <div class="card">
+                <h3>Identity</h3>
+                <button onclick="srai.generateIdentity()">Generate DID</button>
+                <div id="identity-display" style="margin:1rem 0;word-break:break-all;font-size:.8rem"></div>
+            </div>
+
+            <div class="card">
+                <h3>Memory</h3>
+                <select id="memory-type">
+                    <option>episodic</option>
+                    <option>semantic</option>
+                    <option>procedural</option>
+                </select>
+                <textarea id="memory-input" rows="4" placeholder='{"text":"Memory content"}'></textarea>
+                <button onclick="srai.storeMemory()">Store</button>
+            </div>
+
+            <div class="card">
+                <h3>System</h3>
+                <button onclick="srai.exportState()">Export State</button>
+                <button onclick="document.getElementById('import-file').click()">Import State</button>
+                <input type="file" id="import-file" accept=".json" style="display:none">
+                <button onclick="srai.clearAll()" class="danger">Clear All</button>
+            </div>
+
+        </div>
+
+        <div class="content">
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('console')">Console</button>
+                <button class="tab" onclick="switchTab('results')">Results</button>
+                <button class="tab" onclick="switchTab('memory')">Memory</button>
+            </div>
+
+            <div id="console" class="tab-content active">
+                <div id="output"></div>
+            </div>
+            <div id="results" class="tab-content">
+                <div id="results-container"></div>
+            </div>
+            <div id="memory" class="tab-content">
+                <input type="text" id="memory-search" placeholder="Search memory...">
+                <div id="memory-browser"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /* ───────────────────────── POLICY-KEYS ───────────────────────── */
+        class PolicyKeyManager {
+            constructor() {
+                this.root = null;
+                this.active = null;
+                this.revoked = new Set();
+                this.audit = []
+            }
+            async createRoot() {
+                const kp = await crypto.subtle.generateKey({
+                    name: 'Ed25519'
+                }, true, ['sign', 'verify']);
+                this.root = {
+                    id: crypto.randomUUID(),
+                    kp,
+                    policy: {
+                        '*': true
+                    }
+                };
+                this.active = this.root;
+                this.log('Root key created')
+            }
+            deriveAgent() {
+                if (!this.root) return this.log('No root key');
+                const id = crypto.randomUUID();
+                this.active = {
+                    id,
+                    parent: this.root.id,
+                    policy: {
+                        'rag.query': true,
+                        'memory.read': true,
+                        'memory.write': true,
+                        'corpus.ingest': true,
+                        'system.export': true
+                    }
+                };
+                this.log('Agent key derived')
+            }
+            require(cap) {
+                if (!this.active || this.revoked.has(this.active.id)) throw Error('Key revoked');
+                if (this.active.policy[cap] !== true) throw Error('Policy denied: ' + cap);
+                this.audit.push({
+                    cap,
+                    time: Date.now(),
+                    key: this.active.id
+                })
+            }
+            log(msg) {
+                document.getElementById('policy-info').textContent = JSON.stringify(this.active, null, 2);
+                appendLog('[Policy] ' + msg)
+            }
+        }
+        const policy = new PolicyKeyManager()
+
+        /* ───────────────────────── HELPERS ───────────────────────── */
+        function appendLog(msg) {
+            const d = document.createElement('div');
+            d.className = 'log';
+            d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            document.getElementById('output').appendChild(d);
+            d.scrollIntoView({
+                behavior: 'smooth'
+            })
+        }
+
+        function setStatus(s) {
+            document.getElementById('status').textContent = s
+        }
+
+        /* ───────────────────────── S-RAI CORE ───────────────────────── */
+        class SovereignRAI {
+            constructor() {
+                this.state = {
+                    identity: null,
+                    memory: [],
+                    corpus: {
+                        personal: [],
+                        public: []
+                    }
+                }
+                this.activeSources = {
+                    personal: true,
+                    public: false
+                }
+                this.db = null;
+                this.embedder = null;
+                this.llm = null;
+                this.abortController = null;
+                this.sparseIndex = {
+                    docs: [],
+                    invIndex: new Map(),
+                    df: new Map(),
+                    avgdl: 1
+                };
+                this.denseIndex = []
+                this.encKey = null
+                this.init()
+            }
+
+            async init() {
+                await this.initDB()
+                await this.loadState()
+                try {
+                    this.embedder = await Xenova.pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+                    this.llm = await Xenova.pipeline('text-generation', 'Xenova/Phi-3-mini-4k-instruct');
+                    document.getElementById('model-status').textContent = 'Ready (Phi-3)'
+                } catch (e) {
+                    this.log('Model load error: ' + e.message);
+                    document.getElementById('model-status').textContent = 'Failed'
+                }
+                await this.generateEncKey();
+                this.rebuildIndexes();
+                this.updateUI();
+                this.log('S-RAI OS v2.6 ready');
+                setStatus('Ready')
+            }
+
+            async initDB() {
+                return new Promise(resolve => {
+                    const req = indexedDB.open('srai-v2', 5);
+                    req.onupgradeneeded = e => {
+                        const db = e.target.result;
+                        ['state', 'encrypted'].forEach(s => {
+                            if (!db.objectStoreNames.contains(s)) db.createObjectStore(s)
+                        })
+                    };
+                    req.onsuccess = () => {
+                        this.db = req.result;
+                        resolve()
+                    }
+                })
+            }
+            async generateEncKey() {
+                this.encKey = await crypto.subtle.generateKey({
+                    name: 'AES-GCM',
+                    length: 256
+                }, true, ['encrypt', 'decrypt'])
+            }
+            async encrypt(data) {
+                const iv = crypto.getRandomValues(new Uint8Array(12));
+                const enc = await crypto.subtle.encrypt({
+                    name: 'AES-GCM',
+                    iv
+                }, this.encKey, new TextEncoder().encode(JSON.stringify(data)));
+                return {
+                    iv: Array.from(iv),
+                    data: Array.from(new Uint8Array(enc))
+                }
+            }
+            async decrypt(obj) {
+                const dec = await crypto.subtle.decrypt({
+                    name: 'AES-GCM',
+                    iv: new Uint8Array(obj.iv)
+                }, this.encKey, new Uint8Array(obj.data));
+                return JSON.parse(new TextDecoder().decode(dec))
+            }
+            async loadState() {
+                if (!this.db) return;
+                const tx = this.db.transaction(['state', 'encrypted'], 'readonly');
+                const plain = tx.objectStore('state').get('plain');
+                const enc = tx.objectStore('encrypted').get('data');
+                await new Promise(r => tx.oncomplete = r);
+                if (plain.result) Object.assign(this.state, plain.result);
+                if (enc.result) Object.assign(this.state, await this.decrypt(enc.result))
+            }
+            async saveState() {
+                if (!this.db) return;
+                const tx = this.db.transaction(['state', 'encrypted'], 'readwrite');
+                tx.objectStore('state').put({
+                    identity: this.state.identity
+                }, 'plain');
+                tx.objectStore('encrypted').put(await this.encrypt({
+                    memory: this.state.memory,
+                    corpus: this.state.corpus
+                }), 'data');
+                await new Promise(r => tx.oncomplete = r)
+            }
+            log(msg) {
+                appendLog(msg)
+            }
+            updateUI() {
+                document.getElementById('memory-count').textContent = this.state.memory.length;
+                document.getElementById('doc-count').textContent = this.state.corpus.personal.length + this.state.corpus.public.length;
+                document.getElementById('identity-status').textContent = this.state.identity ? this.state.identity.id.slice(-12) : 'None';
+                document.getElementById('identity-display').textContent = this.state.identity ? this.state.identity.id : '';
+                if (document.getElementById('memory').classList.contains('active')) this.renderMemoryBrowser()
+            }
+            async generateIdentity() {
+                try {
+                    const kp = await crypto.subtle.generateKey({
+                        name: 'Ed25519'
+                    }, true, ['sign', 'verify']);
+                    const pub = await crypto.subtle.exportKey('raw', kp.publicKey);
+                    const hex = Array.from(new Uint8Array(pub)).map(b => b.toString(16).padStart(2, '0')).join('');
+                    this.state.identity = {
+                        id: `did:srai:${hex.slice(0,32)}`,
+                        publicKey: hex,
+                        kp,
+                        createdAt: Date.now()
+                    };
+                    await this.saveState();
+                    this.updateUI();
+                    this.log('DID generated')
+                } catch (e) {
+                    this.log('Identity generation unsupported')
+                }
+            }
+
+            storeMemory() {
+                try {
+                    policy.require('memory.write')
+                } catch (e) {
+                    return this.log(e.message)
+                };
+                let content;
+                try {
+                    content = JSON.parse(document.getElementById('memory-input').value || '{"text":""}')
+                } catch {
+                    content = {
+                        text: document.getElementById('memory-input').value
+                    }
+                };
+                if (!content.text && Object.keys(content).length === 0) return this.log('Empty memory');
+                const entry = {
+                    id: crypto.randomUUID(),
+                    type: document.getElementById('memory-type').value,
+                    content,
+                    createdAt: Date.now()
+                };
+                this.state.memory.push(entry);
+                this.saveState();
+                this.incrementalIndexUpdate([entry]);
+                this.updateDenseIndex([entry]);
+                this.updateUI();
+                document.getElementById('memory-input').value = '';
+                this.log('Memory stored')
+            }
+
+            chunkText(text, size = 900, overlap = 150) {
+                const words = text.split(/\s+/);
+                const chunks = [];
+                for (let i = 0; i < words.length; i += size - overlap) {
+                    chunks.push(words.slice(i, i + size).join(' '))
+                }
+                return chunks
+            }
+            toggleSource(src) {
+                this.activeSources[src] = !this.activeSources[src];
+                document.getElementById(`${src}-tag`).classList.toggle('active')
+            }
+            renderMemoryBrowser() {
+                const term = document.getElementById('memory-search').value.toLowerCase();
+                const filtered = this.state.memory.filter(m => JSON.stringify(m.content).toLowerCase().includes(term));
+                document.getElementById('memory-browser').innerHTML = filtered.length ? filtered.map(m => `<div class="result-item"><strong>${m.type} • ${new Date(m.createdAt).toLocaleDateString()}</strong><pre>${JSON.stringify(m.content,null,2)}</pre><button class="danger" onclick="srai.deleteMemory('${m.id}')">Delete</button></div>`).join('') : '<div style="color:var(--text-muted)">No memories</div>'
+            }
+            async deleteMemory(id) {
+                this.state.memory = this.state.memory.filter(m => m.id !== id);
+                await this.saveState();
+                this.rebuildIndexes();
+                this.renderMemoryBrowser();
+                this.updateUI();
+                this.log('Memory deleted')
+            }
+
+            /* ───────────────────────── RAG, Embeddings, BM25, RRF, LLM ───────────────────────── */
+            async updateDenseIndex(docs) {
+                if (!this.embedder || docs.length === 0) return;
+                const bar = document.getElementById('query-progress');
+                for (let i = 0; i < docs.length; i++) {
+                    bar.style.width = `${(i/docs.length)*100}%`;
+                    const emb = await this.embedder(docs[i].text, {
+                        pooling: 'mean',
+                        normalize: true
+                    });
+                    this.denseIndex.push({
+                        vector: Array.from(emb.data),
+                        doc: docs[i]
+                    })
+                }
+                bar.style.width = '0%'
+            }
+            incrementalIndexUpdate(docs) {
+                docs.forEach(doc => {
+                    doc.text = typeof doc.content === 'string' ? doc.content : (doc.content.text || JSON.stringify(doc.content));
+                    this.sparseIndex.docs.push(doc);
+                    doc.text.toLowerCase().split(/\W+/).filter(t => t.length > 2).forEach(term => {
+                        const list = this.sparseIndex.invIndex.get(term) || [];
+                        list.push(this.sparseIndex.docs.length - 1);
+                        this.sparseIndex.invIndex.set(term, list);
+                        this.sparseIndex.df.set(term, (this.sparseIndex.df.get(term) || 0) + 1)
+                    })
+                });
+                this.sparseIndex.avgdl = this.sparseIndex.docs.reduce((s, d) => s + d.text.split(/\s+/).length, 0) / (this.sparseIndex.docs.length || 1)
+            }
+            rebuildIndexes() {
+                this.sparseIndex = {
+                    docs: [],
+                    invIndex: new Map(),
+                    df: new Map(),
+                    avgdl: 1
+                };
+                this.denseIndex = [];
+                const all = [...(this.activeSources.personal ? this.state.corpus.personal : []), ...(this.activeSources.public ? this.state.corpus.public : []), ...this.state.memory];
+                this.incrementalIndexUpdate(all);
+                this.updateDenseIndex(all)
+            }
+            bm25Search(query) {
+                const terms = query.toLowerCase().split(/\W+/).filter(t => t.length > 2);
+                if (!terms.length) return [];
+                const k1 = 1.5,
+                    b = 0.75;
+                return this.sparseIndex.docs.map(doc => {
+                    let score = 0;
+                    const dl = doc.text.split(/\s+/).length;
+                    terms.forEach(term => {
+                        const tf = (doc.text.toLowerCase().match(new RegExp(`\\b${term}\\b`, 'g')) || []).length;
+                        const idf = Math.log((this.sparseIndex.docs.length - (this.sparseIndex.df.get(term) || 0) + 0.5) / ((this.sparseIndex.df.get(term) || 0) + 0.5) + 1);
+                        score += idf * tf * (k1 + 1) / (tf + k1 * (1 - b + b * dl / this.sparseIndex.avgdl))
+                    });
+                    return {
+                        doc,
+                        score
+                    }
+                }).filter(r => r.score > 0).sort((a, b) => b.score - a.score).slice(0, 30)
+            }
+            denseSearch(queryVec) {
+                return this.denseIndex.map(entry => {
+                    let dot = 0;
+                    for (let i = 0; i < entry.vector.length; i++) dot += entry.vector[i] * queryVec[i];
+                    return {
+                        doc: entry.doc,
+                        score: dot
+                    }
+                }).sort((a, b) => b.score - a.score).slice(0, 30)
+            }
+            rrfFuse(sparse, dense, alpha) {
+                const ranks = new Map();
+                const add = (list, weight) => {
+                    list.forEach((r, rank) => {
+                        const key = r.doc.id || JSON.stringify(r.doc);
+                        const cur = ranks.get(key) || {
+                            doc: r.doc,
+                            score: 0
+                        };
+                        cur.score += weight / (60 + rank + 1);
+                        ranks.set(key, cur)
+                    })
+                };
+                add(sparse, 1 - alpha);
+                add(dense, alpha);
+                return Array.from(ranks.values()).sort((a, b) => b.score - b.score).slice(0, 12)
+            }
+
+            async executeQuery() {
+                try {
+                    policy.require('rag.query')
+                } catch (e) {
+                    return this.log(e.message)
+                }
+                const query = document.getElementById('query-input').value.trim();
+                if (!query) return;
+                const alpha = document.getElementById('fusion-alpha').value / 1000;
+                document.getElementById('alpha-value').textContent = alpha.toFixed(2)
+                this.rebuildIndexes();
+                const sparse = this.bm25Search(query);
+                let dense = [];
+                if (this.embedder) {
+                    const qEmb = await this.embedder(query, {
+                        pooling: 'mean',
+                        normalize: true
+                    });
+                    dense = this.denseSearch(qEmb.data)
+                }
+                const fused = this.rrfFuse(sparse, dense, alpha);
+                await this.generateAnswer(query, fused);
+                this.renderResults({
+                    fused,
+                    query
+                });
+                this.log(`RAG executed (α=${alpha.toFixed(2)})`)
+            }
+
+            async generateAnswer(query, contexts) {
+                if (!this.llm) {
+                    this.log('No LLM available');
+                    return
+                }
+                const contextText = contexts.slice(0, 6).map(c => c.doc.text).join('\n---\n');
+                const prompt = `You are a precise sovereign assistant. Use only the provided context.\n\nContext:\n${contextText}\n\nQuestion: ${query}\nAnswer:`;
+                const container = document.getElementById('results-container');
+                container.insertAdjacentHTML('afterbegin', `<div class="card"><h3>Generating...</h3><pre id="gen-out" style="white-space:pre-wrap"></pre></div>`);
+                const out = document.getElementById('gen-out');
+                document.getElementById('cancel-btn').style.display = 'inline-block';
+                this.abortController = new AbortController();
+                try {
+                    await this.llm(prompt, {
+                        max_new_tokens: 512,
+                        temperature: 0.6,
+                        do_sample: true,
+                        stream: true,
+                        signal: this.abortController.signal,
+                        callback_function: token => out.textContent += token
+                    })
+                } catch (e) {
+                    if (e.name !== 'AbortError') this.log('Generation error: ' + e.message)
+                }
+                document.getElementById('cancel-btn').style.display = 'none'
+            }
+
+            cancelGeneration() {
+                if (this.abortController) this.abortController.abort();
+                this.log('Generation cancelled');
+                document.getElementById('cancel-btn').style.display = 'none'
+            }
+
+            async exportState() {
+                policy.require('system.export');
+                const blob = new Blob([JSON.stringify(this.state, null, 2)], {
+                    type: 'application/json'
+                });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `srai-export-${new Date().toISOString().slice(0,10)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                this.log('State exported')
+            }
+            async clearAll() {
+                if (!confirm('Permanently delete all data?')) return;
+                indexedDB.deleteDatabase('srai-v2');
+                location.reload()
+            }
+
+        }
+
+        const srai = new SovereignRAI();
+
+        /* ───────────────────────── UI EVENTS ───────────────────────── */
+        document.getElementById('fusion-alpha').addEventListener('input', e => document.getElementById('alpha-value').textContent = (e.target.value / 1000).toFixed(2))
+
+        async function extractPdfText(file) {
+            const data = new Uint8Array(await file.arrayBuffer());
+            const pdf = await pdfjsLib.getDocument({
+                data
+            }).promise;
+            let text = '';
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const content = await page.getTextContent();
+                text += content.items.map(item => item.str).join(' ') + '\n';
+            }
+            return text
+        }
+
+        document.getElementById('file-upload').addEventListener('change', async e => {
+            if (!e.target.files.length) return;
+            const newDocs = [];
+            for (const file of e.target.files) {
+                let text = file.type === 'application/pdf' ? await extractPdfText(file) : await file.text();
+                const chunks = srai.chunkText(text, 900, 150);
+                chunks.forEach((chunk, i) => {
+                    const doc = {
+                        id: crypto.randomUUID(),
+                        content: {
+                            text: chunk,
+                            source: file.name,
+                            chunk: i
+                        },
+                        filename: file.name,
+                        createdAt: Date.now()
+                    };
+                    srai.state.corpus.personal.push(doc);
+                    newDocs.push(doc)
+                })
+            }
+            await srai.saveState();
+            srai.incrementalIndexUpdate(newDocs);
+            await srai.updateDenseIndex(newDocs);
+            srai.updateUI();
+            srai.log(`${newDocs.length} chunks loaded`);
+            e.target.value = ''
+        })
+
+        document.getElementById('import-file').addEventListener('change', async e => {
+            if (!e.target.files[0]) return;
+            try {
+                const json = JSON.parse(await e.target.files[0].text());
+                Object.assign(srai.state, json);
+                await srai.saveState();
+                srai.rebuildIndexes();
+                srai.updateUI();
+                srai.log('State imported')
+            } catch (err) {
+                srai.log('Import failed: ' + err.message)
+            }
+            e.target.value = ''
+        })
+
+        document.getElementById('memory-search').addEventListener('input', () => srai.renderMemoryBrowser())
+
+        function switchTab(id) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelector(`.tab[onclick="switchTab('${id}')"]`).classList.add('active');
+            document.getElementById(id).classList.add('active');
+            if (id === 'memory') srai.renderMemoryBrowser()
+        }
+    </script>
+
+</body>
+
+</html>
